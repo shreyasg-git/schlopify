@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: shop-db
+  namespace: shop-1
+  labels:
+    app: shop-db
+spec:
+  # Shared network namespace — PostgREST reaches Postgres via localhost
+  containers:
+
+    # ── PostgreSQL ─────────────────────────────────────────────────────────
+    - name: postgres
+      image: postgres:15-alpine
+      ports:
+        - containerPort: 5432
+      env:
+        - name: POSTGRES_DB
+          value: shopdb
+        - name: POSTGRES_USER
+          value: shopuser
+        - name: POSTGRES_PASSWORD
+          value: shoppass
+      readinessProbe:
+        exec:
+          command: ["pg_isready", "-U", "shopuser", "-d", "shopdb"]
+        initialDelaySeconds: 5
+        periodSeconds: 5
+
+    # ── PostgREST ──────────────────────────────────────────────────────────
+    # Connects to Postgres via localhost — zero network hop (sidecar pattern)
+    - name: postgrest
+      image: postgrest/postgrest:v12.0.2
+      ports:
+        - containerPort: 3000
+      env:
+        - name: PGRST_DB_URI
+          value: "postgres://shopuser:shoppass@localhost:5432/shopdb"
+        - name: PGRST_DB_SCHEMA
+          value: "public"
+        - name: PGRST_DB_ANON_ROLE
+          value: "shopuser"
+        - name: PGRST_SERVER_PORT
+          value: "3000"

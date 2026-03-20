@@ -1,0 +1,41 @@
+# ── Ingress 1: API — strips /api prefix before forwarding to PostgREST ──────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shop-ingress-api
+  namespace: shop-1
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: shop1.local
+      http:
+        paths:
+          - path: /api(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: shop-api
+                port:
+                  number: 3000
+---
+# ── Ingress 2: Frontend — NO rewrite so /assets/* are served correctly ───────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shop-ingress-frontend
+  namespace: shop-1
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: shop1.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: shop-frontend
+                port:
+                  number: 80

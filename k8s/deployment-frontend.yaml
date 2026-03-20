@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shop-frontend
+  namespace: shop-1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shop-frontend
+  template:
+    metadata:
+      labels:
+        app: shop-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: shop-frontend:latest
+          # Use IfNotPresent so local image loaded via minikube/kind is used
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
