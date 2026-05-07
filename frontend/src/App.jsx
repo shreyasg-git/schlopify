@@ -2,11 +2,27 @@ import { useState, useEffect } from 'react';
 
 export default function App() {
   const [products, setProducts] = useState([]);
+  const [stats, setStats] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    fetch('/api/products')
+  const fetchProducts = (term) => {
+    setLoading(true);
+    setError(null);
+    let url = '/api/products';
+    let options = {};
+
+    if (term.trim() !== '') {
+      url = '/api/rpc/search_products';
+      options = {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ search_term: term }),
+      };
+    }
+
+    fetch(url, options)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
@@ -19,16 +35,48 @@ export default function App() {
         setError(err.message);
         setLoading(false);
       });
+  };
+
+  useEffect(() => {
+    fetch('/api/rpc/get_stats', { method: 'POST' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data) setStats(data);
+      })
+      .catch(console.error);
+      
+    fetchProducts('');
   }, []);
+
+  const handleSearch = (e) => {
+    e.preventDefault();
+    fetchProducts(searchTerm);
+  };
 
   return (
     <div style={styles.page}>
       <header style={styles.header}>
         <h1 style={styles.title}>🛒 Shop 1 — Storefront</h1>
         <p style={styles.subtitle}>Powered by PostgREST + PostgreSQL (sidecar)</p>
+        {stats && (
+          <div style={styles.stats}>
+            Total Products: {stats.total_products} | Total Characters: {stats.total_characters}
+          </div>
+        )}
       </header>
 
       <main style={styles.main}>
+        <form onSubmit={handleSearch} style={styles.searchForm}>
+          <input 
+            type="text" 
+            value={searchTerm} 
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Search products..."
+            style={styles.searchInput}
+          />
+          <button type="submit" style={styles.searchButton}>Search</button>
+        </form>
+
         {loading && <p style={styles.status}>Loading products…</p>}
         {error && <p style={styles.error}>Error: {error}</p>}
         {!loading && !error && products.length === 0 && (
@@ -112,5 +160,41 @@ const styles = {
   name: {
     fontWeight: 500,
     fontSize: '1rem',
+  },
+  stats: {
+    marginTop: '1rem',
+    color: '#00e5ff',
+    fontWeight: 'bold',
+    fontSize: '0.9rem',
+    background: 'rgba(0, 229, 255, 0.1)',
+    padding: '0.5rem 1rem',
+    borderRadius: '20px',
+    display: 'inline-block',
+  },
+  searchForm: {
+    display: 'flex',
+    gap: '0.5rem',
+    marginBottom: '2rem',
+  },
+  searchInput: {
+    flex: 1,
+    padding: '0.75rem 1rem',
+    borderRadius: '8px',
+    border: '1px solid rgba(255,255,255,0.2)',
+    background: 'rgba(0,0,0,0.2)',
+    color: '#fff',
+    fontSize: '1rem',
+    outline: 'none',
+  },
+  searchButton: {
+    padding: '0.75rem 1.5rem',
+    borderRadius: '8px',
+    border: 'none',
+    background: '#00e5ff',
+    color: '#000',
+    fontWeight: 'bold',
+    fontSize: '1rem',
+    cursor: 'pointer',
+    transition: 'background 0.2s',
   },
 };

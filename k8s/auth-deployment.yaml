@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-server
+  namespace: auth-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-server
+  template:
+    metadata:
+      labels:
+        app: auth-server
+    spec:
+      containers:
+        - name: auth
+          image: auth-server:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: JWT_SECRET
+              value: "shlopify-super-secret"
+          volumeMounts:
+            - name: auth-data
+              mountPath: /data
+      volumes:
+        - name: auth-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: auth-system
+spec:
+  selector:
+    app: auth-server
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080

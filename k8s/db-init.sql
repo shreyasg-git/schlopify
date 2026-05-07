@@ -16,3 +16,16 @@ INSERT INTO products (name) VALUES
   ('Gadget Pro'),
   ('Doohickey X')
 ON CONFLICT DO NOTHING;
+
+-- DB functions to be exposed via PostgREST
+CREATE OR REPLACE FUNCTION search_products(search_term text)
+RETURNS SETOF products AS $$
+  SELECT * FROM products WHERE name ILIKE '%' || search_term || '%';
+$$ LANGUAGE sql STABLE;
+
+CREATE TYPE product_stats AS (total_products int, total_characters int);
+
+CREATE OR REPLACE FUNCTION get_stats()
+RETURNS product_stats AS $$
+  SELECT count(*)::int, coalesce(sum(length(name)), 0)::int FROM products;
+$$ LANGUAGE sql STABLE;
