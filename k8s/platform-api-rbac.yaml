@@ -1,0 +1,50 @@
+# ── ServiceAccount for the Platform API ──────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: platform-api
+  namespace: schlopify-platform
+---
+# ── ClusterRole: permissions to create tenant resources ──────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: schlopify-provisioner
+rules:
+  # Namespaces
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  # Pods (sidecar DB pod + exec for schema init)
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  # Services
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  # Deployments (frontend)
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  # Ingress
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+---
+# ── Bind the ServiceAccount to the ClusterRole ──────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: schlopify-provisioner-binding
+subjects:
+  - kind: ServiceAccount
+    name: platform-api
+    namespace: schlopify-platform
+roleRef:
+  kind: ClusterRole
+  name: schlopify-provisioner
+  apiGroup: rbac.authorization.k8s.io
