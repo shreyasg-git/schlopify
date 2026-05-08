@@ -1,0 +1,19 @@
+
+
+@layer base {
+  :root[data-theme="minimal"] {
+    --color-primary: 222.2 47.4% 11.2%;
+    --color-primary-foreground: 210 40% 98%;
+    
+    --color-surface: 0 0% 100%;
+    --color-surface-foreground: 222.2 47.4% 11.2%;
+    
+    --color-background: 0 0% 100%;
+    --color-foreground: 222.2 47.4% 11.2%;
+    
+    --radius-surface: 0.5rem;
+    --radius-button: 0.375rem;
+    
+    --shadow-brutal: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  }
+}

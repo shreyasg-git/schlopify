@@ -12,25 +12,25 @@ set -euo pipefail
 CLUSTER_TYPE="${1:-}"
 
 echo "==> Building Docker images..."
-docker build -t shop-frontend:latest ./frontend
+docker build -t shop-frontend:v4 ./frontend
 docker build -t platform-frontend:v3 ./platform-frontend
 docker build -t auth-server:latest ./auth
 
 # Load image into local cluster
 if [[ "$CLUSTER_TYPE" == "minikube" ]]; then
   echo "==> Loading images into minikube..."
-  minikube image load shop-frontend:latest
+  minikube image load shop-frontend:v4
   minikube image load platform-frontend:v3
   minikube image load auth-server:latest
 elif [[ "$CLUSTER_TYPE" == "kind" ]]; then
   echo "==> Loading images into kind..."
-  kind load docker-image shop-frontend:latest
+  kind load docker-image shop-frontend:v4
   kind load docker-image platform-frontend:v3
   kind load docker-image auth-server:latest
 else
   echo "[!] No cluster type specified; skipping image load."
-  echo "    Run manually: minikube image load shop-frontend:latest && minikube image load platform-frontend:v3 && minikube image load auth-server:latest"
-  echo "               or: kind load docker-image shop-frontend:latest && kind load docker-image platform-frontend:v3 && kind load docker-image auth-server:latest"
+  echo "    Run manually: minikube image load shop-frontend:v4 && minikube image load platform-frontend:v3 && minikube image load auth-server:latest"
+  echo "               or: kind load docker-image shop-frontend:v4 && kind load docker-image platform-frontend:v3 && kind load docker-image auth-server:latest"
 fi
 
 echo "==> Applying Kubernetes manifests..."

@@ -1,0 +1,24 @@
+
+
+@layer base {
+  :root[data-theme="brutalist"] {
+    /* Bright yellow brutalist primary */
+    --color-primary: 50 100% 50%;
+    --color-primary-foreground: 0 0% 0%;
+    
+    /* Pure white surface with black text */
+    --color-surface: 0 0% 100%;
+    --color-surface-foreground: 0 0% 0%;
+    
+    /* Off-white background */
+    --color-background: 0 0% 95%;
+    --color-foreground: 0 0% 0%;
+    
+    /* Sharp edges */
+    --radius-surface: 0px;
+    --radius-button: 0px;
+    
+    /* Hard black shadow */
+    --shadow-brutal: 4px 4px 0px 0px rgba(0,0,0,1);
+  }
+}

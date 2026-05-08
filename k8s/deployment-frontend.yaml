@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: shop-frontend:latest
+          image: shop-frontend:v4
           # Use IfNotPresent so local image loaded via minikube/kind is used
           imagePullPolicy: IfNotPresent
           ports:
