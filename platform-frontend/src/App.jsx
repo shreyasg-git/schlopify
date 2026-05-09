@@ -107,20 +107,11 @@ function AuthView({ type, setView }) {
 
   const handleGoogleSuccess = async (credentialResponse) => {
     try {
-      const res = await fetch('/auth/google', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          credential: credentialResponse.credential,
-          role: 'tenant',
-          tenant_id: ''
-        }),
+      const data = await postGoogleAuth({
+        credential: credentialResponse.credential,
+        role: 'tenant',
+        tenant_id: ''
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Authentication failed');
-      }
 
       // Store token
       localStorage.setItem('platform_token', data.token);
@@ -183,20 +174,11 @@ function ShopAuthView() {
         throw new Error('Missing tenant_id or redirect_uri');
       }
 
-      const res = await fetch('/auth/google', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          credential: credentialResponse.credential,
-          role: 'customer',
-          tenant_id: tenantId
-        }),
+      const data = await postGoogleAuth({
+        credential: credentialResponse.credential,
+        role: 'customer',
+        tenant_id: tenantId
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Authentication failed');
-      }
 
       // Redirect back to the shop with the token
       window.location.href = `${redirectUri}?token=${data.token}`;
@@ -248,6 +230,54 @@ function ShopAuthView() {
       </div>
     </motion.div>
   );
+}
+
+async function postGoogleAuth(payload) {
+  const endpoints = ['/auth/google', '/api/auth/google'];
+  let routeError;
+
+  for (const endpoint of endpoints) {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    try {
+      return await readAuthResponse(res);
+    } catch (err) {
+      if (res.status !== 404 || endpoint === endpoints[endpoints.length - 1]) {
+        throw err;
+      }
+      routeError = err;
+    }
+  }
+
+  throw routeError || new Error('Authentication failed');
+}
+
+async function readAuthResponse(res) {
+  const text = await res.text();
+  let data = {};
+
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      const message = text.replace(/\s+/g, ' ').trim().slice(0, 140);
+      throw new Error(
+        res.ok
+          ? 'Auth server returned an invalid response'
+          : `Auth request failed (${res.status}): ${message || res.statusText}`
+      );
+    }
+  }
+
+  if (!res.ok) {
+    throw new Error(data.error || `Auth request failed (${res.status})`);
+  }
+
+  return data;
 }
 
 /* ─── Dashboard (Deploy Form) ──────────────────────────────────────────────── */

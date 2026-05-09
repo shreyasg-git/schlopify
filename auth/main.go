@@ -33,7 +33,7 @@ type GoogleAuthRequest struct {
 	TenantID   string `json:"tenant_id"`
 }
 
-var googleClientID = getEnv("VITE_GOOGLE_CLIENT_ID", "")
+var googleClientID = getEnv("GOOGLE_CLIENT_ID", getEnv("VITE_GOOGLE_CLIENT_ID", ""))
 
 type TokenResponse struct {
 	Token string `json:"token"`
@@ -70,6 +70,7 @@ func main() {
 	}
 
 	http.HandleFunc("/auth/google", googleAuthHandler)
+	http.HandleFunc("/api/auth/google", googleAuthHandler)
 
 	// Simple healthcheck
 	http.HandleFunc("/auth/health", func(w http.ResponseWriter, r *http.Request) {

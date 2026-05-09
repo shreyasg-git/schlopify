@@ -27,6 +27,8 @@ spec:
               value: "192.168.49.2"
             - name: FRONTEND_IMAGE_TAG
               value: "v5"
+            - name: AUTH_SERVICE_URL
+              value: "http://auth-service.auth-system.svc.cluster.local"
 ---
 apiVersion: v1
 kind: Service

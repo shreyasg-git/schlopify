@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -31,10 +33,10 @@ type ErrorResponse struct {
 }
 
 var (
-	validThemes  = map[string]bool{"brutalist": true, "minimal": true}
-	slugRegex    = regexp.MustCompile(`[^a-z0-9-]`)
-	minikubeIP   = getEnv("MINIKUBE_IP", "192.168.49.2")
-	frontendTag  = getEnv("FRONTEND_IMAGE_TAG", "v5")
+	validThemes = map[string]bool{"brutalist": true, "minimal": true}
+	slugRegex   = regexp.MustCompile(`[^a-z0-9-]`)
+	minikubeIP  = getEnv("MINIKUBE_IP", "192.168.49.2")
+	frontendTag = getEnv("FRONTEND_IMAGE_TAG", "v5")
 )
 
 func getEnv(key, fallback string) string {
@@ -50,7 +52,14 @@ func main() {
 		log.Fatalf("Failed to initialise Kubernetes provisioner: %v", err)
 	}
 
+	authProxy, err := newAuthProxy()
+	if err != nil {
+		log.Fatalf("Failed to initialise auth proxy: %v", err)
+	}
+
 	mux := http.NewServeMux()
+
+	mux.Handle("/api/auth/", authProxy)
 
 	mux.HandleFunc("/api/deploy", func(w http.ResponseWriter, r *http.Request) {
 		handleDeploy(w, r, provisioner)
@@ -67,6 +76,22 @@ func main() {
 	port := getEnv("PORT", "8090")
 	log.Printf("Platform API listening on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, handler))
+}
+
+func newAuthProxy() (http.Handler, error) {
+	target, err := url.Parse(getEnv("AUTH_SERVICE_URL", "http://auth-service.auth-system.svc.cluster.local"))
+	if err != nil {
+		return nil, err
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	originalDirector := proxy.Director
+	proxy.Director = func(r *http.Request) {
+		originalDirector(r)
+		r.URL.Path = strings.TrimPrefix(r.URL.Path, "/api")
+		r.Host = target.Host
+	}
+	return proxy, nil
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
