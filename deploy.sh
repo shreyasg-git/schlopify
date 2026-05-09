@@ -19,7 +19,7 @@ echo "==> Building Docker images..."
 docker build -t shop-frontend:v5 ./frontend
 docker build -t platform-frontend:v4 ./platform-frontend
 docker build -t auth-server:latest ./auth
-docker build -t platform-api:v1 ./platform-api
+docker build -t platform-api:v2 ./platform-api
 
 # ── Load images into cluster ────────────────────────────────────────────────
 if [[ "$CLUSTER_TYPE" == "minikube" ]]; then
@@ -27,7 +27,7 @@ if [[ "$CLUSTER_TYPE" == "minikube" ]]; then
   minikube image load shop-frontend:v5
   minikube image load platform-frontend:v4
   minikube image load auth-server:latest
-  minikube image load platform-api:v1
+  minikube image load platform-api:v2
 elif [[ "$CLUSTER_TYPE" == "kind" ]]; then
   echo "==> Loading images into kind..."
   kind load docker-image shop-frontend:v5

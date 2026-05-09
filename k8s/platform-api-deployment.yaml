@@ -16,7 +16,7 @@ spec:
       serviceAccountName: platform-api
       containers:
         - name: api
-          image: platform-api:v1
+          image: platform-api:v2
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8090

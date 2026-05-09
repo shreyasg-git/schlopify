@@ -8,8 +8,10 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
@@ -46,6 +48,20 @@ func NewProvisioner() (*Provisioner, error) {
 }
 
 // ProvisionShop creates the entire tenant stack in Kubernetes.
+//
+// Architecture (post-HPA refactor):
+//
+//	┌─── Pod ──────────┐
+//	│ PostgreSQL :5432  │  ← standalone, no sidecar
+//	└──────────────────┘
+//	         ↓ shop-db-svc (ClusterIP)
+//	┌─── Deployment ────┐
+//	│ PostgREST (×1→×5) │  ← HPA-managed, connects via Service DNS
+//	└───────────────────┘
+//	         ↓ shop-api (ClusterIP)
+//	┌─── Deployment ────┐
+//	│ Frontend (NGINX)   │
+//	└───────────────────┘
 func (p *Provisioner) ProvisionShop(namespace, shopID, theme, host, frontendImage string) error {
 	ctx := context.Background()
 
@@ -55,43 +71,61 @@ func (p *Provisioner) ProvisionShop(namespace, shopID, theme, host, frontendImag
 		return fmt.Errorf("namespace creation failed: %w", err)
 	}
 
-	// Step 2: Create the sidecar pod (PostgreSQL + PostgREST)
+	// Step 2: Create the database pod (PostgreSQL ONLY — no sidecar)
 	log.Printf("[%s] Creating database pod...", shopID)
-	if err := p.createDatabasePod(ctx, namespace, shopID); err != nil {
+	if err := p.createDatabasePod(ctx, namespace); err != nil {
 		return fmt.Errorf("database pod creation failed: %w", err)
 	}
 
-	// Step 3: Create shop-api service (exposes PostgREST)
+	// Step 3: Create internal service exposing PostgreSQL to PostgREST
+	log.Printf("[%s] Creating database service...", shopID)
+	if err := p.createDatabaseService(ctx, namespace); err != nil {
+		return fmt.Errorf("database service creation failed: %w", err)
+	}
+
+	// Step 4: Create PostgREST deployment (connects via Service DNS, not localhost)
+	log.Printf("[%s] Creating PostgREST deployment...", shopID)
+	if err := p.createPostgRESTDeployment(ctx, namespace); err != nil {
+		return fmt.Errorf("postgrest deployment creation failed: %w", err)
+	}
+
+	// Step 5: Create shop-api service (exposes PostgREST to ingress)
 	log.Printf("[%s] Creating API service...", shopID)
 	if err := p.createAPIService(ctx, namespace); err != nil {
 		return fmt.Errorf("api service creation failed: %w", err)
 	}
 
-	// Step 4: Create frontend deployment (with theme env var)
+	// Step 6: Create HPA for PostgREST
+	log.Printf("[%s] Creating HPA for PostgREST...", shopID)
+	if err := p.createPostgRESTHPA(ctx, namespace); err != nil {
+		return fmt.Errorf("hpa creation failed: %w", err)
+	}
+
+	// Step 7: Create frontend deployment (with theme env var)
 	log.Printf("[%s] Creating frontend deployment (theme=%s)...", shopID, theme)
 	if err := p.createFrontendDeployment(ctx, namespace, theme, frontendImage); err != nil {
 		return fmt.Errorf("frontend deployment creation failed: %w", err)
 	}
 
-	// Step 5: Create frontend service
+	// Step 8: Create frontend service
 	log.Printf("[%s] Creating frontend service...", shopID)
 	if err := p.createFrontendService(ctx, namespace); err != nil {
 		return fmt.Errorf("frontend service creation failed: %w", err)
 	}
 
-	// Step 6: Create ingress rules
+	// Step 9: Create ingress rules
 	log.Printf("[%s] Creating ingress...", shopID)
 	if err := p.createIngress(ctx, namespace, shopID, host); err != nil {
 		return fmt.Errorf("ingress creation failed: %w", err)
 	}
 
-	// Step 7: Wait for the database pod to be ready
+	// Step 10: Wait for the database pod to be ready
 	log.Printf("[%s] Waiting for database pod readiness...", shopID)
 	if err := p.waitForPod(ctx, namespace, "shop-db", 120*time.Second); err != nil {
 		return fmt.Errorf("database pod not ready: %w", err)
 	}
 
-	// Step 8: Initialize the database schema
+	// Step 11: Initialize the database schema
 	log.Printf("[%s] Initialising database schema...", shopID)
 	if err := p.initDatabase(ctx, namespace); err != nil {
 		return fmt.Errorf("database init failed: %w", err)
@@ -110,8 +144,8 @@ func (p *Provisioner) createNamespace(ctx context.Context, namespace, shopID str
 		ObjectMeta: metav1.ObjectMeta{
 			Name: namespace,
 			Labels: map[string]string{
-				"tenant":          shopID,
-				"managed-by":      "schlopify-platform",
+				"tenant":     shopID,
+				"managed-by": "schlopify-platform",
 			},
 		},
 	}
@@ -119,18 +153,17 @@ func (p *Provisioner) createNamespace(ctx context.Context, namespace, shopID str
 	return err
 }
 
-func (p *Provisioner) createDatabasePod(ctx context.Context, namespace, shopID string) error {
+// createDatabasePod creates a pod with ONLY PostgreSQL.
+// PostgREST is no longer a sidecar — it runs as a separate Deployment.
+func (p *Provisioner) createDatabasePod(ctx context.Context, namespace string) error {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "shop-db",
 			Namespace: namespace,
-			Labels: map[string]string{
-				"app": "shop-db",
-			},
+			Labels:    map[string]string{"app": "shop-db"},
 		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
-				// ── PostgreSQL ──
 				{
 					Name:  "postgres",
 					Image: "postgres:15-alpine",
@@ -150,18 +183,6 @@ func (p *Provisioner) createDatabasePod(ctx context.Context, namespace, shopID s
 						PeriodSeconds:       5,
 					},
 				},
-				// ── PostgREST (sidecar — zero-hop via localhost) ──
-				{
-					Name:  "postgrest",
-					Image: "postgrest/postgrest:v12.0.2",
-					Ports: []corev1.ContainerPort{{ContainerPort: 3000}},
-					Env: []corev1.EnvVar{
-						{Name: "PGRST_DB_URI", Value: "postgres://shopuser:shoppass@localhost:5432/shopdb"},
-						{Name: "PGRST_DB_SCHEMA", Value: "public"},
-						{Name: "PGRST_DB_ANON_ROLE", Value: "shopuser"},
-						{Name: "PGRST_SERVER_PORT", Value: "3000"},
-					},
-				},
 			},
 		},
 	}
@@ -169,6 +190,85 @@ func (p *Provisioner) createDatabasePod(ctx context.Context, namespace, shopID s
 	return err
 }
 
+// createDatabaseService exposes PostgreSQL internally so PostgREST can reach it
+// via DNS (shop-db-svc:5432) instead of localhost.
+func (p *Provisioner) createDatabaseService(ctx context.Context, namespace string) error {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "shop-db-svc",
+			Namespace: namespace,
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"app": "shop-db"},
+			Ports: []corev1.ServicePort{
+				{
+					Name:       "postgres",
+					Port:       5432,
+					TargetPort: intstr.FromInt(5432),
+				},
+			},
+			Type: corev1.ServiceTypeClusterIP,
+		},
+	}
+	_, err := p.client.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
+	return err
+}
+
+// createPostgRESTDeployment creates PostgREST as a standalone Deployment.
+// It connects to PostgreSQL via the shop-db-svc Service (not localhost).
+// This allows HPA to scale PostgREST replicas independently of the database.
+func (p *Provisioner) createPostgRESTDeployment(ctx context.Context, namespace string) error {
+	replicas := int32(1)
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "shop-postgrest",
+			Namespace: namespace,
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": "shop-postgrest"},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{"app": "shop-postgrest"},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "postgrest",
+							Image: "postgrest/postgrest:v12.0.2",
+							Ports: []corev1.ContainerPort{{ContainerPort: 3000}},
+							Env: []corev1.EnvVar{
+								// Key change: connects via Service DNS, not localhost
+								{Name: "PGRST_DB_URI", Value: "postgres://shopuser:shoppass@shop-db-svc:5432/shopdb"},
+								{Name: "PGRST_DB_SCHEMA", Value: "public"},
+								{Name: "PGRST_DB_ANON_ROLE", Value: "shopuser"},
+								{Name: "PGRST_SERVER_PORT", Value: "3000"},
+							},
+							// Resource requests are REQUIRED for HPA to calculate
+							// CPU utilization percentages.
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("50m"),
+									corev1.ResourceMemory: resource.MustParse("64Mi"),
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("200m"),
+									corev1.ResourceMemory: resource.MustParse("128Mi"),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	_, err := p.client.AppsV1().Deployments(namespace).Create(ctx, dep, metav1.CreateOptions{})
+	return err
+}
+
+// createAPIService exposes PostgREST (now a Deployment) to the ingress layer.
 func (p *Provisioner) createAPIService(ctx context.Context, namespace string) error {
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
@@ -176,7 +276,7 @@ func (p *Provisioner) createAPIService(ctx context.Context, namespace string) er
 			Namespace: namespace,
 		},
 		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{"app": "shop-db"},
+			Selector: map[string]string{"app": "shop-postgrest"},
 			Ports: []corev1.ServicePort{
 				{
 					Name:       "http",
@@ -188,6 +288,49 @@ func (p *Provisioner) createAPIService(ctx context.Context, namespace string) er
 		},
 	}
 	_, err := p.client.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
+	return err
+}
+
+// createPostgRESTHPA creates a HorizontalPodAutoscaler targeting the PostgREST
+// Deployment. Scales between 1-5 replicas based on CPU utilization.
+//
+// When traffic spikes (e.g. flash sale), CPU on PostgREST rises as it parses
+// more HTTP requests and serializes more JSON. HPA detects this and spins up
+// additional replicas. All replicas connect to the same PostgreSQL instance
+// via the shop-db-svc Service.
+func (p *Provisioner) createPostgRESTHPA(ctx context.Context, namespace string) error {
+	minReplicas := int32(1)
+	maxReplicas := int32(10)
+	targetCPU := int32(50) // scale up when average CPU > 50% of request
+
+	hpa := &autoscalingv2.HorizontalPodAutoscaler{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "shop-postgrest-hpa",
+			Namespace: namespace,
+		},
+		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
+			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
+				APIVersion: "apps/v1",
+				Kind:       "Deployment",
+				Name:       "shop-postgrest",
+			},
+			MinReplicas: &minReplicas,
+			MaxReplicas: maxReplicas,
+			Metrics: []autoscalingv2.MetricSpec{
+				{
+					Type: autoscalingv2.ResourceMetricSourceType,
+					Resource: &autoscalingv2.ResourceMetricSource{
+						Name: corev1.ResourceCPU,
+						Target: autoscalingv2.MetricTarget{
+							Type:               autoscalingv2.UtilizationMetricType,
+							AverageUtilization: &targetCPU,
+						},
+					},
+				},
+			},
+		},
+	}
+	_, err := p.client.AutoscalingV2().HorizontalPodAutoscalers(namespace).Create(ctx, hpa, metav1.CreateOptions{})
 	return err
 }
 

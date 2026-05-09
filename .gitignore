@@ -2,3 +2,6 @@ node_modules/
 frontend/node_modules/
 platform-frontend/node_modules/
 auth-server/node_modules/
+
+
+_docs/
