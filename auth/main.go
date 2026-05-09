@@ -10,9 +10,11 @@ import (
 	"os"
 	"time"
 
+	"context"
+
 	"github.com/golang-jwt/jwt/v5"
 	_ "github.com/mattn/go-sqlite3"
-	"golang.org/x/crypto/bcrypt"
+	"google.golang.org/api/idtoken"
 )
 
 var db *sql.DB
@@ -25,12 +27,13 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-type Credentials struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	Role     string `json:"role"`
-	TenantID string `json:"tenant_id"`
+type GoogleAuthRequest struct {
+	Credential string `json:"credential"`
+	Role       string `json:"role"`
+	TenantID   string `json:"tenant_id"`
 }
+
+var googleClientID = getEnv("VITE_GOOGLE_CLIENT_ID", "")
 
 type TokenResponse struct {
 	Token string `json:"token"`
@@ -56,7 +59,6 @@ func main() {
 	CREATE TABLE IF NOT EXISTS users (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		email TEXT NOT NULL,
-		password_hash TEXT NOT NULL,
 		role TEXT NOT NULL CHECK (role IN ('tenant', 'customer')),
 		tenant_id TEXT,
 		UNIQUE(email, tenant_id, role)
@@ -67,8 +69,7 @@ func main() {
 		log.Fatalf("Failed to create table: %v", err)
 	}
 
-	http.HandleFunc("/auth/register", registerHandler)
-	http.HandleFunc("/auth/login", loginHandler)
+	http.HandleFunc("/auth/google", googleAuthHandler)
 
 	// Simple healthcheck
 	http.HandleFunc("/auth/health", func(w http.ResponseWriter, r *http.Request) {
@@ -87,101 +88,77 @@ func jsonError(w http.ResponseWriter, errMsg string, code int) {
 	json.NewEncoder(w).Encode(ErrorResponse{Error: errMsg})
 }
 
-func registerHandler(w http.ResponseWriter, r *http.Request) {
+func googleAuthHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	var creds Credentials
-	err := json.NewDecoder(r.Body).Decode(&creds)
+	var req GoogleAuthRequest
+	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
 		jsonError(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 
-	if creds.Email == "" || creds.Password == "" || creds.Role == "" {
+	if req.Credential == "" || req.Role == "" {
 		jsonError(w, "Missing required fields", http.StatusBadRequest)
 		return
 	}
 
-	if creds.Role != "tenant" && creds.Role != "customer" {
+	if req.Role != "tenant" && req.Role != "customer" {
 		jsonError(w, "Invalid role", http.StatusBadRequest)
 		return
 	}
 
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(creds.Password), bcrypt.DefaultCost)
+	// Verify Google Token
+	ctx := context.Background()
+	payload, err := idtoken.Validate(ctx, req.Credential, googleClientID)
 	if err != nil {
-		jsonError(w, "Internal server error", http.StatusInternalServerError)
+		log.Printf("Invalid Google token: %v", err)
+		jsonError(w, "Invalid Google token", http.StatusUnauthorized)
 		return
 	}
 
-	insertQuery := `INSERT INTO users (email, password_hash, role, tenant_id) VALUES (?, ?, ?, ?)`
+	email := payload.Claims["email"].(string)
+
 	var tenantID interface{}
-	if creds.TenantID != "" {
-		tenantID = creds.TenantID
+	if req.TenantID != "" {
+		tenantID = req.TenantID
 	} else {
 		tenantID = nil
 	}
 
-	_, err = db.Exec(insertQuery, creds.Email, string(hashedPassword), creds.Role, tenantID)
-	if err != nil {
-		log.Printf("Registration error: %v", err)
-		jsonError(w, "Registration failed or user already exists", http.StatusConflict)
-		return
-	}
-
-	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte(`{"message":"User created successfully"}`))
-}
-
-func loginHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var creds Credentials
-	err := json.NewDecoder(r.Body).Decode(&creds)
-	if err != nil {
-		jsonError(w, "Invalid request payload", http.StatusBadRequest)
-		return
-	}
-
-	query := `SELECT id, password_hash FROM users WHERE email = ? AND role = ? AND (tenant_id = ? OR (? IS NULL AND tenant_id IS NULL))`
-
-	var tenantID interface{}
-	if creds.TenantID != "" {
-		tenantID = creds.TenantID
-	} else {
-		tenantID = nil
-	}
-
+	// Find or create user
 	var id int
-	var storedHash string
-	err = db.QueryRow(query, creds.Email, creds.Role, tenantID, tenantID).Scan(&id, &storedHash)
+	query := `SELECT id FROM users WHERE email = ? AND role = ? AND (tenant_id = ? OR (? IS NULL AND tenant_id IS NULL))`
+	err = db.QueryRow(query, email, req.Role, tenantID, tenantID).Scan(&id)
+
 	if err != nil {
 		if err == sql.ErrNoRows {
-			jsonError(w, "Invalid credentials", http.StatusUnauthorized)
+			// Auto-register
+			insertQuery := `INSERT INTO users (email, role, tenant_id) VALUES (?, ?, ?)`
+			res, err := db.Exec(insertQuery, email, req.Role, tenantID)
+			if err != nil {
+				log.Printf("Error creating user: %v", err)
+				jsonError(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
+			insertedID, _ := res.LastInsertId()
+			id = int(insertedID)
+		} else {
+			log.Printf("Database error: %v", err)
+			jsonError(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
-		log.Printf("Database error during login: %v", err)
-		jsonError(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	err = bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(creds.Password))
-	if err != nil {
-		jsonError(w, "Invalid credentials", http.StatusUnauthorized)
-		return
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"user_id":   id,
-		"email":     creds.Email,
-		"role":      creds.Role,
-		"tenant_id": creds.TenantID,
-		"exp":       time.Now().Add(time.Hour * 24).Unix(), // 24 hours expiry
+		"email":     email,
+		"role":      req.Role,
+		"tenant_id": req.TenantID,
+		"exp":       time.Now().Add(time.Hour * 24).Unix(),
 	})
 
 	tokenString, err := token.SignedString(jwtSecret)

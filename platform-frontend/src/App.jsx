@@ -1,9 +1,16 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowRight, Box, CircleDashed, LogIn, Rocket, CheckCircle, Loader2, Store, Palette } from 'lucide-react';
+import { GoogleLogin } from '@react-oauth/google';
 
 export default function App() {
-  const [view, setView] = useState('dashboard');
+  const getInitialView = () => {
+    const path = window.location.pathname;
+    if (path === '/shop-auth') return 'shop-auth';
+    return 'landing';
+  };
+
+  const [view, setView] = useState(getInitialView);
 
   return (
     <>
@@ -42,6 +49,7 @@ export default function App() {
           {view === 'login' && <AuthView key="login" type="login" setView={setView} />}
           {view === 'signup' && <AuthView key="signup" type="signup" setView={setView} />}
           {view === 'dashboard' && <DashboardView key="dashboard" />}
+          {view === 'shop-auth' && <ShopAuthView key="shop-auth" />}
         </AnimatePresence>
       </main>
     </>
@@ -95,10 +103,31 @@ function LandingView({ setView }) {
 
 function AuthView({ type, setView }) {
   const isLogin = type === 'login';
+  const [error, setError] = useState('');
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    setView('dashboard');
+  const handleGoogleSuccess = async (credentialResponse) => {
+    try {
+      const res = await fetch('/auth/google', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          credential: credentialResponse.credential,
+          role: 'tenant',
+          tenant_id: ''
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Authentication failed');
+      }
+
+      // Store token
+      localStorage.setItem('platform_token', data.token);
+      setView('dashboard');
+    } catch (err) {
+      setError(err.message);
+    }
   };
 
   return (
@@ -111,31 +140,111 @@ function AuthView({ type, setView }) {
       <div style={styles.authCard}>
         <h2 style={styles.authTitle}>{isLogin ? 'Welcome back.' : 'Create your account.'}</h2>
         <p style={styles.authSubtitle}>
-          {isLogin ? 'Enter your credentials to access your store.' : 'Join the new standard of commerce.'}
+          {isLogin ? 'Sign in to access your store.' : 'Join the new standard of commerce.'}
         </p>
-        <form style={styles.authForm} onSubmit={handleSubmit}>
-          <div style={styles.inputGroup}>
-            <label style={styles.label}>Email address</label>
-            <input type="email" style={styles.input} placeholder="name@company.com" />
-          </div>
-          <div style={styles.inputGroup}>
-            <div style={styles.passwordHeader}>
-              <label style={styles.label}>Password</label>
-              {isLogin && <a href="#" style={styles.forgotLink}>Forgot?</a>}
-            </div>
-            <input type="password" style={styles.input} placeholder="••••••••" />
-          </div>
-          <button type="submit"
-            style={{...styles.primaryButton, width: '100%', justifyContent: 'center', marginTop: '1rem'}}>
-            {isLogin ? 'Sign In' : 'Create Account'} <ArrowRight size={18} />
-          </button>
-        </form>
+
+        <div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0' }}>
+          <GoogleLogin
+            onSuccess={handleGoogleSuccess}
+            onError={() => {
+              setError('Google login failed');
+            }}
+            theme="filled_black"
+            shape="rectangular"
+            size="large"
+            text={isLogin ? "signin_with" : "signup_with"}
+          />
+        </div>
+
+        {error && (
+          <div style={{ ...styles.errorBanner, marginTop: '1rem' }}>{error}</div>
+        )}
+
         <div style={styles.authFooter}>
           {isLogin ? "Don't have an account?" : "Already have an account?"}
           <button style={styles.textButton} onClick={() => setView(isLogin ? 'signup' : 'login')}>
             {isLogin ? 'Sign up' : 'Sign in'}
           </button>
         </div>
+      </div>
+    </motion.div>
+  );
+}
+
+function ShopAuthView() {
+  const [error, setError] = useState('');
+  const searchParams = new URLSearchParams(window.location.search);
+  const tenantId = searchParams.get('tenant_id');
+  const redirectUri = searchParams.get('redirect_uri');
+
+  const handleGoogleSuccess = async (credentialResponse) => {
+    try {
+      if (!tenantId || !redirectUri) {
+        throw new Error('Missing tenant_id or redirect_uri');
+      }
+
+      const res = await fetch('/auth/google', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          credential: credentialResponse.credential,
+          role: 'customer',
+          tenant_id: tenantId
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Authentication failed');
+      }
+
+      // Redirect back to the shop with the token
+      window.location.href = `${redirectUri}?token=${data.token}`;
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  if (!tenantId || !redirectUri) {
+    return (
+      <div style={styles.authContainer}>
+        <div style={styles.authCard}>
+          <h2 style={styles.authTitle}>Invalid Request</h2>
+          <p style={styles.authSubtitle}>Missing authentication parameters.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.96, filter: 'blur(10px)' }}
+      animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
+      exit={{ opacity: 0, scale: 0.96, filter: 'blur(10px)' }}
+      transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+      style={styles.authContainer}>
+      <div style={styles.authCard}>
+        <h2 style={styles.authTitle}>Login to {tenantId}</h2>
+        <p style={styles.authSubtitle}>
+          Authorize with Google to continue to the shop.
+        </p>
+
+        <div style={{ display: 'flex', justifyContent: 'center', margin: '2rem 0' }}>
+          <GoogleLogin
+            onSuccess={handleGoogleSuccess}
+            onError={() => {
+              setError('Google login failed');
+            }}
+            theme="filled_black"
+            shape="rectangular"
+            size="large"
+            text="signin_with"
+          />
+        </div>
+
+        {error && (
+          <div style={{ ...styles.errorBanner, marginTop: '1rem' }}>{error}</div>
+        )}
       </div>
     </motion.div>
   );
