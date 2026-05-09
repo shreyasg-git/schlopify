@@ -1,11 +1,11 @@
-FROM golang:1.20-alpine AS builder
+FROM golang:alpine AS builder
 
 # Install gcc and musl-dev because go-sqlite3 requires CGO
 RUN apk add --no-cache gcc musl-dev
 
 WORKDIR /app
 
-COPY go.mod main.go ./
+COPY go.mod go.sum main.go ./
 RUN go mod tidy
 RUN CGO_ENABLED=1 GOOS=linux go build -o auth-server main.go
 

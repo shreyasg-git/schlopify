@@ -5,11 +5,20 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      // In dev, proxy /api/* to PostgREST running locally or port-forwarded
-      '/api': {
-        target: 'http://localhost:3000',
+      // In dev, proxy auth requests to the auth server.
+      '/auth': {
+        target: 'http://localhost:8080',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, ''),
+      },
+      // Backward-compatible path for older built assets.
+      '/api/auth': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+      // In dev, proxy platform API requests to the platform API server.
+      '/api': {
+        target: 'http://localhost:8090',
+        changeOrigin: true,
       },
     },
   },

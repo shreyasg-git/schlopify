@@ -6,7 +6,8 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: shop1.192.168.49.2.nip.io
+
+    - host: schlopify.192.168.49.2.nip.io
       http:
         paths:
           - path: /auth
@@ -16,10 +17,7 @@ spec:
                 name: auth-service
                 port:
                   number: 80
-    - host: schlopify.192.168.49.2.nip.io
-      http:
-        paths:
-          - path: /auth
+          - path: /api/auth
             pathType: Prefix
             backend:
               service:

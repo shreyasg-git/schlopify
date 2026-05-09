@@ -1,63 +1,76 @@
 #!/usr/bin/env bash
-# deploy.sh — Apply POC manifests in order
+# deploy.sh — Build images, load into cluster, apply platform manifests
 # Usage: ./deploy.sh [minikube|kind]
 #
-# Prerequisites:
-#   - kubectl pointing at your cluster
-#   - NGINX Ingress Controller installed
-#   - Frontend image already built and loaded (see README.md)
+# This deploys the PLATFORM stack only (control plane).
+# Individual shop stacks are provisioned dynamically via the Platform API.
 
 set -euo pipefail
 
 CLUSTER_TYPE="${1:-}"
 
-echo "==> Building Docker images..."
-docker build -t shop-frontend:latest ./frontend
-docker build -t platform-frontend:v3 ./platform-frontend
-docker build -t auth-server:latest ./auth
+echo "══════════════════════════════════════════════════════════════════"
+echo "  SCHLOPIFY — Platform Deployment"
+echo "══════════════════════════════════════════════════════════════════"
 
-# Load image into local cluster
+# ── Build Docker images ──────────────────────────────────────────────────────
+echo ""
+echo "==> Building Docker images..."
+docker build -t shop-frontend:v5 ./frontend
+docker build -t platform-frontend:v4 ./platform-frontend
+docker build -t auth-server:latest ./auth
+docker build -t platform-api:v2 ./platform-api
+
+# ── Load images into cluster ────────────────────────────────────────────────
 if [[ "$CLUSTER_TYPE" == "minikube" ]]; then
   echo "==> Loading images into minikube..."
-  minikube image load shop-frontend:latest
-  minikube image load platform-frontend:v3
+  minikube image load shop-frontend:v5
+  minikube image load platform-frontend:v4
   minikube image load auth-server:latest
+  minikube image load platform-api:v2
 elif [[ "$CLUSTER_TYPE" == "kind" ]]; then
   echo "==> Loading images into kind..."
-  kind load docker-image shop-frontend:latest
-  kind load docker-image platform-frontend:v3
+  kind load docker-image shop-frontend:v5
+  kind load docker-image platform-frontend:v4
   kind load docker-image auth-server:latest
+  kind load docker-image platform-api:v1
 else
   echo "[!] No cluster type specified; skipping image load."
-  echo "    Run manually: minikube image load shop-frontend:latest && minikube image load platform-frontend:v3 && minikube image load auth-server:latest"
-  echo "               or: kind load docker-image shop-frontend:latest && kind load docker-image platform-frontend:v3 && kind load docker-image auth-server:latest"
+  echo "    Usage: ./deploy.sh minikube"
 fi
 
+# ── Apply Kubernetes manifests ──────────────────────────────────────────────
+echo ""
 echo "==> Applying Kubernetes manifests..."
+
+# Auth system
 kubectl apply -f k8s/auth-namespace.yaml
 kubectl apply -f k8s/auth-deployment.yaml
 kubectl apply -f k8s/auth-ingress.yaml
+
+# Platform namespace + RBAC (must come before deployments)
 kubectl apply -f k8s/platform-namespace.yaml
+kubectl apply -f k8s/platform-api-rbac.yaml
+
+# Platform services
+kubectl apply -f k8s/platform-api-deployment.yaml
 kubectl apply -f k8s/deployment-platform-frontend.yaml
 kubectl apply -f k8s/service-platform-frontend.yaml
 kubectl apply -f k8s/ingress-platform.yaml
-kubectl apply -f k8s/namespace.yaml
-kubectl apply -f k8s/pod-shop-db.yaml
-kubectl apply -f k8s/service-shop-api.yaml
-kubectl apply -f k8s/deployment-frontend.yaml
-kubectl apply -f k8s/service-frontend.yaml
-kubectl apply -f k8s/ingress.yaml
-
-echo "==> Waiting for shop-db Pod to be ready..."
-kubectl wait --for=condition=Ready pod/shop-db -n shop-1 --timeout=120s
-echo "==> Waiting for auth-server Deployment to be available..."
-kubectl wait --for=condition=Available deployment/auth-server -n auth-system --timeout=120s
-
-echo "==> Initialising database schema..."
-kubectl exec -i -n shop-1 shop-db -c postgres -- \
-  psql -U shopuser -d shopdb < k8s/db-init.sql
 
 echo ""
-echo "✅ Done! You can now access the applications without /etc/hosts changes:"
-echo "   Platform: http://schlopify.192.168.49.2.nip.io"
-echo "   Shop 1:   http://shop1.192.168.49.2.nip.io"
+echo "==> Waiting for platform-api to be available..."
+kubectl wait --for=condition=Available deployment/platform-api -n schlopify-platform --timeout=120s
+
+echo "==> Waiting for auth-server to be available..."
+kubectl wait --for=condition=Available deployment/auth-server -n auth-system --timeout=120s
+
+echo ""
+echo "══════════════════════════════════════════════════════════════════"
+echo "  ✅ Platform deployed!"
+echo ""
+echo "  Platform UI:  http://schlopify.192.168.49.2.nip.io"
+echo "  Platform API: http://schlopify.192.168.49.2.nip.io/api/health"
+echo ""
+echo "  Individual shops are now created dynamically via the UI."
+echo "══════════════════════════════════════════════════════════════════"

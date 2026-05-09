@@ -22,6 +22,8 @@ spec:
           env:
             - name: JWT_SECRET
               value: "shlopify-super-secret"
+            - name: GOOGLE_CLIENT_ID
+              value: "63806793289-9ei2uukn8gjqjveh0l663a7aaggh27b1.apps.googleusercontent.com"
           volumeMounts:
             - name: auth-data
               mountPath: /data
