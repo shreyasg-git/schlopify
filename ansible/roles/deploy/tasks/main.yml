@@ -1,0 +1,73 @@
+---
+- name: Build Docker images
+  ansible.builtin.command:
+    cmd: >
+      docker build {% if no_cache == '1' %}--no-cache{% endif %}
+      -t {{ item.name }}:{{ refresh_tag }}
+      -t {{ item.name }}:{{ item.stable_tag }}
+      {{ project_root }}/{{ item.dir }}
+  loop:
+    - { name: 'shop-frontend', stable_tag: 'v5', dir: 'frontend' }
+    - { name: 'platform-frontend', stable_tag: 'v4', dir: 'platform-frontend' }
+    - { name: 'auth-server', stable_tag: 'latest', dir: 'auth' }
+    - { name: 'platform-api', stable_tag: 'v2', dir: 'platform-api' }
+
+- name: Load images into minikube
+  ansible.builtin.command: "minikube image load {{ item }}"
+  loop:
+    - "shop-frontend:{{ refresh_tag }}"
+    - "shop-frontend:v5"
+    - "platform-frontend:{{ refresh_tag }}"
+    - "platform-frontend:v4"
+    - "auth-server:{{ refresh_tag }}"
+    - "auth-server:latest"
+    - "platform-api:{{ refresh_tag }}"
+    - "platform-api:v2"
+  when: cluster_type == 'minikube'
+
+- name: Load images into kind
+  ansible.builtin.command: "kind load docker-image {{ item }}"
+  loop:
+    - "shop-frontend:{{ refresh_tag }}"
+    - "shop-frontend:v5"
+    - "platform-frontend:{{ refresh_tag }}"
+    - "platform-frontend:v4"
+    - "auth-server:{{ refresh_tag }}"
+    - "auth-server:latest"
+    - "platform-api:{{ refresh_tag }}"
+    - "platform-api:v2"
+  when: cluster_type == 'kind'
+
+- name: Apply Kubernetes manifests (Auth)
+  ansible.builtin.command: "kubectl apply -f {{ project_root }}/k8s/{{ item }}"
+  loop:
+    - auth-namespace.yaml
+    - auth-deployment.yaml
+    - auth-ingress.yaml
+
+- name: Apply Kubernetes manifests (Platform Namespace & RBAC)
+  ansible.builtin.command: "kubectl apply -f {{ project_root }}/k8s/{{ item }}"
+  loop:
+    - platform-namespace.yaml
+    - platform-api-rbac.yaml
+
+- name: Apply Kubernetes manifests (Platform Services)
+  ansible.builtin.command: "kubectl apply -f {{ project_root }}/k8s/{{ item }}"
+  loop:
+    - platform-api-deployment.yaml
+    - deployment-platform-frontend.yaml
+    - service-platform-frontend.yaml
+    - ingress-platform.yaml
+
+- name: Wait for platform-api deployment
+  ansible.builtin.command: "kubectl wait --for=condition=Available deployment/platform-api -n schlopify-platform --timeout=120s"
+
+- name: Wait for auth-server deployment
+  ansible.builtin.command: "kubectl wait --for=condition=Available deployment/auth-server -n auth-system --timeout=120s"
+
+- name: Update deployment images to trigger reload
+  ansible.builtin.command: "kubectl -n {{ item.ns }} set image deployment/{{ item.deploy }} {{ item.container }}={{ item.image }}:{{ refresh_tag }}"
+  loop:
+    - { ns: 'auth-system', deploy: 'auth-server', container: 'auth', image: 'auth-server' }
+    - { ns: 'schlopify-platform', deploy: 'platform-api', container: 'api', image: 'platform-api' }
+    - { ns: 'schlopify-platform', deploy: 'platform-frontend', container: 'frontend', image: 'platform-frontend' }

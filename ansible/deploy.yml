@@ -1,0 +1,12 @@
+---
+- name: Deploy Schlopify Platform
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  vars:
+    cluster_type: minikube
+    refresh_tag: "latest"
+    no_cache: '1'
+    project_root: "{{ playbook_dir }}/.."
+  roles:
+    - deploy
