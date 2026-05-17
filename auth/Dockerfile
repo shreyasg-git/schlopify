@@ -5,7 +5,9 @@ RUN apk add --no-cache gcc musl-dev
 
 WORKDIR /app
 
-COPY go.mod go.sum main.go ./
+COPY go.mod go.sum ./
+RUN go mod download
+COPY main.go ./
 RUN go mod tidy
 RUN CGO_ENABLED=1 GOOS=linux go build -o auth-server main.go
 

@@ -9,7 +9,7 @@ pipeline {
         // Defaults, can be overridden by Jenkins params or environment
         CLUSTER_TYPE = 'minikube'
         REFRESH_TAG = "build-${BUILD_NUMBER}"
-        NO_CACHE = '1'
+        NO_CACHE = '0'
         MINIKUBE_HOME = '/home/shreyasbg'
         KUBECONFIG = '/home/shreyasbg/.kube/config'
     }
