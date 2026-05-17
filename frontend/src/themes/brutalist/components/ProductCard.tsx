@@ -2,9 +2,11 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { Button } from './Button';
 import { Product } from '../../../registry/components/ProductCard';
+import { useCart } from '../../../core/CartContext';
 
 export const ProductCard = React.forwardRef<HTMLDivElement, { product: Product }>((props, ref) => {
   const { product, ...rest } = props;
+  const { addToCart } = useCart();
   
   return (
     <motion.div
@@ -26,7 +28,7 @@ export const ProductCard = React.forwardRef<HTMLDivElement, { product: Product }
         {product.description && <p className="text-sm font-medium mb-4 line-clamp-2">{product.description}</p>}
         <div className="mt-auto flex items-center justify-between pt-2">
           <span className="font-black text-2xl">${product.price || '0.00'}</span>
-          <Button size="sm" className="h-10 px-4 text-sm shadow-none hover:shadow-brutal hover:-translate-x-1 hover:-translate-y-1">Buy Now</Button>
+          <Button size="sm" onClick={() => addToCart(product.id)} className="h-10 px-4 text-sm shadow-none hover:shadow-brutal hover:-translate-x-1 hover:-translate-y-1">Buy Now</Button>
         </div>
       </div>
     </motion.div>

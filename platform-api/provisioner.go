@@ -517,11 +517,39 @@ CREATE TABLE IF NOT EXISTS products (
   image_url TEXT DEFAULT ''
 );
 
-INSERT INTO products (name, price, description) VALUES
-  ('Classic Tee', 29.99, 'A timeless wardrobe essential'),
-  ('Urban Hoodie', 59.99, 'Streetwear meets comfort'),
-  ('Minimal Sneakers', 89.99, 'Clean lines, premium leather'),
-  ('Canvas Tote', 24.99, 'Everyday carry, ethically made')
+CREATE TABLE IF NOT EXISTS cart_items (
+  id SERIAL PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  product_id INT REFERENCES products(id) ON DELETE CASCADE,
+  quantity INT DEFAULT 1,
+  UNIQUE(session_id, product_id)
+);
+
+CREATE OR REPLACE VIEW cart_details AS
+SELECT c.id, c.session_id, c.quantity, p.id as product_id, p.name, p.price, p.image_url
+FROM cart_items c JOIN products p ON c.product_id = p.id;
+
+INSERT INTO products (name, price, description, image_url) VALUES
+  ('Classic Tee', 29.99, 'A timeless wardrobe essential', 'https://picsum.photos/seed/p1/400/400'),
+  ('Urban Hoodie', 59.99, 'Streetwear meets comfort', 'https://picsum.photos/seed/p2/400/400'),
+  ('Minimal Sneakers', 89.99, 'Clean lines, premium leather', 'https://picsum.photos/seed/p3/400/400'),
+  ('Canvas Tote', 24.99, 'Everyday carry, ethically made', 'https://picsum.photos/seed/p4/400/400'),
+  ('Leather Wallet', 45.00, 'Slim profile bifold wallet', 'https://picsum.photos/seed/p5/400/400'),
+  ('Vintage Watch', 120.00, 'Analog watch with leather strap', 'https://picsum.photos/seed/p6/400/400'),
+  ('Aviator Sunglasses', 35.50, 'Polarized UV protection', 'https://picsum.photos/seed/p7/400/400'),
+  ('Denim Jacket', 75.00, 'Classic blue denim', 'https://picsum.photos/seed/p8/400/400'),
+  ('Wool Beanie', 18.00, 'Warm and comfortable', 'https://picsum.photos/seed/p9/400/400'),
+  ('Running Shoes', 110.00, 'Lightweight and responsive', 'https://picsum.photos/seed/p10/400/400'),
+  ('Graphic T-Shirt', 25.00, '100% cotton with unique print', 'https://picsum.photos/seed/p11/400/400'),
+  ('Chino Pants', 48.00, 'Tailored fit everyday wear', 'https://picsum.photos/seed/p12/400/400'),
+  ('Oxford Shirt', 55.00, 'Smart casual button-down', 'https://picsum.photos/seed/p13/400/400'),
+  ('Travel Backpack', 95.00, 'Water-resistant laptop sleeve', 'https://picsum.photos/seed/p14/400/400'),
+  ('Wireless Earbuds', 85.00, 'Active noise cancellation', 'https://picsum.photos/seed/p15/400/400'),
+  ('Sports Bottle', 15.00, 'Vacuum insulated stainless steel', 'https://picsum.photos/seed/p16/400/400'),
+  ('Yoga Mat', 30.00, 'Non-slip eco-friendly material', 'https://picsum.photos/seed/p17/400/400'),
+  ('Desk Lamp', 42.00, 'Adjustable LED with wireless charging', 'https://picsum.photos/seed/p18/400/400'),
+  ('Coffee Mug', 12.00, 'Ceramic minimalist design', 'https://picsum.photos/seed/p19/400/400'),
+  ('Mechanical Keyboard', 130.00, 'Tactile switches with RGB', 'https://picsum.photos/seed/p20/400/400')
 ON CONFLICT DO NOTHING;
 
 CREATE OR REPLACE FUNCTION search_products(search_term text)
