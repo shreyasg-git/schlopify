@@ -10,6 +10,8 @@ pipeline {
         CLUSTER_TYPE = 'minikube'
         REFRESH_TAG = "build-${BUILD_NUMBER}"
         NO_CACHE = '1'
+        MINIKUBE_HOME = '/home/shreyasbg'
+        KUBECONFIG = '/home/shreyasbg/.kube/config'
     }
 
     stages {

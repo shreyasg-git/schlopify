@@ -71,3 +71,15 @@
     - { ns: 'auth-system', deploy: 'auth-server', container: 'auth', image: 'auth-server' }
     - { ns: 'schlopify-platform', deploy: 'platform-api', container: 'api', image: 'platform-api' }
     - { ns: 'schlopify-platform', deploy: 'platform-frontend', container: 'frontend', image: 'platform-frontend' }
+
+- name: Print deployment success message
+  ansible.builtin.debug:
+    msg: |
+      ══════════════════════════════════════════════════════════════════
+        ✅ Platform deployed!
+
+        Platform UI:  http://schlopify.192.168.49.2.nip.io
+        Platform API: http://schlopify.192.168.49.2.nip.io/api/health
+
+        Individual shops are now created dynamically via the UI.
+      ══════════════════════════════════════════════════════════════════
