@@ -54,6 +54,19 @@
     - auth-deployment.yaml
     - auth-ingress.yaml
 
+- name: Apply ELK namespace manifest
+  ansible.builtin.command: "kubectl apply -f {{ project_root }}/k8s/elk-namespace.yaml"
+
+- name: Apply ELK manifests
+  ansible.builtin.command: "kubectl apply -f {{ project_root }}/k8s/{{ item }}"
+  loop:
+    - elasticsearch.yaml
+    - logstash-configmap.yaml
+    - logstash.yaml
+    - kibana.yaml
+    - filebeat-configmap.yaml
+    - filebeat-daemonset.yaml
+
 - name: Apply Kubernetes manifests (Platform Namespace & RBAC)
   ansible.builtin.command: "kubectl apply -f {{ project_root }}/k8s/{{ item }}"
   loop:
