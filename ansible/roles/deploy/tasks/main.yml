@@ -38,10 +38,19 @@
     - "platform-api:v2"
   when: cluster_type == 'kind'
 
-- name: Apply Kubernetes manifests (Auth)
+- name: Apply auth namespace manifest
+  ansible.builtin.command: "kubectl apply -f {{ project_root }}/k8s/auth-namespace.yaml"
+
+- name: Create auth-server secrets from Vault vars
+  ansible.builtin.command: >
+    kubectl -n auth-system create secret generic auth-server-secrets
+    --from-literal=JWT_SECRET="{{ jwt_secret }}"
+    --from-literal=GOOGLE_CLIENT_ID="{{ google_client_id }}"
+    --dry-run=client -o yaml | kubectl apply -f -
+
+- name: Apply auth deployment and ingress manifests
   ansible.builtin.command: "kubectl apply -f {{ project_root }}/k8s/{{ item }}"
   loop:
-    - auth-namespace.yaml
     - auth-deployment.yaml
     - auth-ingress.yaml
 
