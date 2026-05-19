@@ -3,6 +3,8 @@
   hosts: localhost
   connection: local
   gather_facts: no
+  vars_files:
+    - vault.yml
   vars:
     cluster_type: minikube
     refresh_tag: "latest"

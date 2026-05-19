@@ -18,7 +18,7 @@ import (
 )
 
 var db *sql.DB
-var jwtSecret = []byte(getEnv("JWT_SECRET", "supersecret"))
+var jwtSecret = []byte(getEnv("JWT_SECRET", ""))
 
 func getEnv(key, fallback string) string {
 	if value, ok := os.LookupEnv(key); ok {
@@ -33,7 +33,16 @@ type GoogleAuthRequest struct {
 	TenantID   string `json:"tenant_id"`
 }
 
-var googleClientID = getEnv("GOOGLE_CLIENT_ID", getEnv("VITE_GOOGLE_CLIENT_ID", ""))
+var googleClientID = getEnv("GOOGLE_CLIENT_ID", "")
+
+func init() {
+	if len(jwtSecret) == 0 {
+		log.Fatal("JWT_SECRET environment variable must be set")
+	}
+	if googleClientID == "" {
+		log.Fatal("GOOGLE_CLIENT_ID environment variable must be set")
+	}
+}
 
 type TokenResponse struct {
 	Token string `json:"token"`
