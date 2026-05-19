@@ -83,52 +83,52 @@ func (p *Provisioner) ProvisionShop(namespace, shopID, theme, host, frontendImag
 		return fmt.Errorf("database service creation failed: %w", err)
 	}
 
-	// Step 4: Create PostgREST deployment (connects via Service DNS, not localhost)
-	log.Printf("[%s] Creating PostgREST deployment...", shopID)
-	if err := p.createPostgRESTDeployment(ctx, namespace); err != nil {
-		return fmt.Errorf("postgrest deployment creation failed: %w", err)
-	}
-
-	// Step 5: Create shop-api service (exposes PostgREST to ingress)
-	log.Printf("[%s] Creating API service...", shopID)
-	if err := p.createAPIService(ctx, namespace); err != nil {
-		return fmt.Errorf("api service creation failed: %w", err)
-	}
-
-	// Step 6: Create HPA for PostgREST
-	log.Printf("[%s] Creating HPA for PostgREST...", shopID)
-	if err := p.createPostgRESTHPA(ctx, namespace); err != nil {
-		return fmt.Errorf("hpa creation failed: %w", err)
-	}
-
-	// Step 7: Create frontend deployment (with theme env var)
-	log.Printf("[%s] Creating frontend deployment (theme=%s)...", shopID, theme)
-	if err := p.createFrontendDeployment(ctx, namespace, theme, frontendImage); err != nil {
-		return fmt.Errorf("frontend deployment creation failed: %w", err)
-	}
-
-	// Step 8: Create frontend service
-	log.Printf("[%s] Creating frontend service...", shopID)
-	if err := p.createFrontendService(ctx, namespace); err != nil {
-		return fmt.Errorf("frontend service creation failed: %w", err)
-	}
-
-	// Step 9: Create ingress rules
-	log.Printf("[%s] Creating ingress...", shopID)
-	if err := p.createIngress(ctx, namespace, shopID, host); err != nil {
-		return fmt.Errorf("ingress creation failed: %w", err)
-	}
-
-	// Step 10: Wait for the database pod to be ready
+	// Step 4: Wait for the database pod to be ready
 	log.Printf("[%s] Waiting for database pod readiness...", shopID)
 	if err := p.waitForPod(ctx, namespace, "shop-db", 120*time.Second); err != nil {
 		return fmt.Errorf("database pod not ready: %w", err)
 	}
 
-	// Step 11: Initialize the database schema
+	// Step 5: Initialize the database schema
 	log.Printf("[%s] Initialising database schema...", shopID)
 	if err := p.initDatabase(ctx, namespace); err != nil {
 		return fmt.Errorf("database init failed: %w", err)
+	}
+
+	// Step 6: Create PostgREST deployment (connects via Service DNS, not localhost)
+	log.Printf("[%s] Creating PostgREST deployment...", shopID)
+	if err := p.createPostgRESTDeployment(ctx, namespace); err != nil {
+		return fmt.Errorf("postgrest deployment creation failed: %w", err)
+	}
+
+	// Step 7: Create shop-api service (exposes PostgREST to ingress)
+	log.Printf("[%s] Creating API service...", shopID)
+	if err := p.createAPIService(ctx, namespace); err != nil {
+		return fmt.Errorf("api service creation failed: %w", err)
+	}
+
+	// Step 8: Create HPA for PostgREST
+	log.Printf("[%s] Creating HPA for PostgREST...", shopID)
+	if err := p.createPostgRESTHPA(ctx, namespace); err != nil {
+		return fmt.Errorf("hpa creation failed: %w", err)
+	}
+
+	// Step 9: Create frontend deployment (with theme env var)
+	log.Printf("[%s] Creating frontend deployment (theme=%s)...", shopID, theme)
+	if err := p.createFrontendDeployment(ctx, namespace, theme, frontendImage); err != nil {
+		return fmt.Errorf("frontend deployment creation failed: %w", err)
+	}
+
+	// Step 10: Create frontend service
+	log.Printf("[%s] Creating frontend service...", shopID)
+	if err := p.createFrontendService(ctx, namespace); err != nil {
+		return fmt.Errorf("frontend service creation failed: %w", err)
+	}
+
+	// Step 11: Create ingress rules
+	log.Printf("[%s] Creating ingress...", shopID)
+	if err := p.createIngress(ctx, namespace, shopID, host); err != nil {
+		return fmt.Errorf("ingress creation failed: %w", err)
 	}
 
 	log.Printf("[%s] ✅ Provisioning complete!", shopID)
