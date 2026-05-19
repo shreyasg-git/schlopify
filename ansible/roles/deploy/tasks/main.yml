@@ -42,7 +42,7 @@
   ansible.builtin.command: "kubectl apply -f {{ project_root }}/k8s/auth-namespace.yaml"
 
 - name: Create auth-server secrets from Vault vars
-  ansible.builtin.command: >
+  ansible.builtin.shell: >
     kubectl -n auth-system create secret generic auth-server-secrets
     --from-literal=JWT_SECRET="{{ jwt_secret }}"
     --from-literal=GOOGLE_CLIENT_ID="{{ google_client_id }}"
