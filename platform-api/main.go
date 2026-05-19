@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -50,6 +51,11 @@ func main() {
 	provisioner, err := NewProvisioner()
 	if err != nil {
 		log.Fatalf("Failed to initialise Kubernetes provisioner: %v", err)
+	}
+
+	// Deploy central ELK stack components (if they don't already exist)
+	if err := provisioner.ProvisionELKStack(context.Background()); err != nil {
+		log.Printf("Warning: Failed to provision ELK stack: %v", err)
 	}
 
 	authProxy, err := newAuthProxy()

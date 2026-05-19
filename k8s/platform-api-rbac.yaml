@@ -38,6 +38,14 @@ rules:
   - apiGroups: ["autoscaling"]
     resources: ["horizontalpodautoscalers"]
     verbs: ["create", "get", "list", "watch", "delete"]
+  # ConfigMaps
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  # DaemonSets
+  - apiGroups: ["apps"]
+    resources: ["daemonsets"]
+    verbs: ["create", "get", "list", "watch", "delete"]
 ---
 # ── Bind the ServiceAccount to the ClusterRole ──────────────────────────────
 apiVersion: rbac.authorization.k8s.io/v1

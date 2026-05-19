@@ -11,6 +11,7 @@ import (
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -599,5 +600,337 @@ $$ LANGUAGE sql STABLE;
 		log.Printf("[db-init] stderr: %s", stderr.String())
 	}
 
+	return nil
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// ELK Stack Provisioning
+// ──────────────────────────────────────────────────────────────────────────────
+
+// ProvisionELKStack deploys the centralized ELK stack if it doesn't already exist.
+func (p *Provisioner) ProvisionELKStack(ctx context.Context) error {
+	log.Println("[ELK] Provisioning ELK Stack components...")
+
+	namespace := "elk"
+	if err := p.createNamespaceIfNotExists(ctx, namespace, "elk"); err != nil {
+		return fmt.Errorf("failed to create ELK namespace: %w", err)
+	}
+
+	if err := p.createELKConfigMaps(ctx, namespace); err != nil {
+		return fmt.Errorf("failed to create ELK configmaps: %w", err)
+	}
+
+	if err := p.createElasticsearch(ctx, namespace); err != nil {
+		return fmt.Errorf("failed to create Elasticsearch: %w", err)
+	}
+
+	if err := p.createLogstash(ctx, namespace); err != nil {
+		return fmt.Errorf("failed to create Logstash: %w", err)
+	}
+
+	if err := p.createKibana(ctx, namespace); err != nil {
+		return fmt.Errorf("failed to create Kibana: %w", err)
+	}
+
+	if err := p.createFilebeat(ctx, namespace); err != nil {
+		return fmt.Errorf("failed to create Filebeat: %w", err)
+	}
+
+	log.Println("[ELK] ✅ ELK Stack provisioning complete!")
+	return nil
+}
+
+func (p *Provisioner) createNamespaceIfNotExists(ctx context.Context, namespace, tenant string) error {
+	_, err := p.client.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+	if err == nil {
+		return nil // already exists
+	}
+	if !errors.IsNotFound(err) {
+		return err
+	}
+	return p.createNamespace(ctx, namespace, tenant)
+}
+
+func (p *Provisioner) createELKConfigMaps(ctx context.Context, namespace string) error {
+	lsCM := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "logstash-pipeline", Namespace: namespace},
+		Data: map[string]string{
+			"logstash.conf": `input {
+  beats {
+    port => 5044
+  }
+}
+
+output {
+  elasticsearch {
+    hosts => ["http://elasticsearch.elk.svc.cluster.local:9200"]
+    index => "%{[@metadata][beat]}-%{+YYYY.MM.dd}"
+  }
+}`,
+		},
+	}
+	_, err := p.client.CoreV1().ConfigMaps(namespace).Create(ctx, lsCM, metav1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+
+	fbCM := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "filebeat-config", Namespace: namespace},
+		Data: map[string]string{
+			"filebeat.yml": `filebeat.inputs:
+  - type: container
+    paths:
+      - /var/log/containers/*.log
+    exclude_files: ['.gz$']
+    processors:
+      - add_kubernetes_metadata:
+          host: ${NODE_NAME}
+          matchers:
+            - logs_path:
+                logs_path: "/var/log/containers"
+output.logstash:
+  hosts: ["logstash.elk.svc.cluster.local:5044"]
+setup.kibana:
+  host: "http://kibana.elk.svc.cluster.local:5601"
+`,
+		},
+	}
+	_, err = p.client.CoreV1().ConfigMaps(namespace).Create(ctx, fbCM, metav1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+
+	return nil
+}
+
+func (p *Provisioner) createElasticsearch(ctx context.Context, namespace string) error {
+	replicas := int32(1)
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "elasticsearch", Namespace: namespace},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "elasticsearch"}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "elasticsearch"}},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "elasticsearch",
+							Image: "docker.elastic.co/elasticsearch/elasticsearch:8.11.0",
+							Env: []corev1.EnvVar{
+								{Name: "discovery.type", Value: "single-node"},
+								{Name: "xpack.security.enabled", Value: "false"},
+								{Name: "network.host", Value: "0.0.0.0"},
+								{Name: "ES_JAVA_OPTS", Value: "-Xms256m -Xmx256m"},
+							},
+							Ports: []corev1.ContainerPort{{ContainerPort: 9200, Name: "http"}},
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceMemory: resource.MustParse("512Mi"),
+									corev1.ResourceCPU:    resource.MustParse("250m"),
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceMemory: resource.MustParse("1Gi"),
+									corev1.ResourceCPU:    resource.MustParse("500m"),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	_, err := p.client.AppsV1().Deployments(namespace).Create(ctx, dep, metav1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "elasticsearch", Namespace: namespace},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"app": "elasticsearch"},
+			Ports: []corev1.ServicePort{
+				{Name: "http", Port: 9200, TargetPort: intstr.FromInt(9200), Protocol: corev1.ProtocolTCP},
+			},
+		},
+	}
+	_, err = p.client.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+	return nil
+}
+
+func (p *Provisioner) createLogstash(ctx context.Context, namespace string) error {
+	replicas := int32(1)
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "logstash", Namespace: namespace},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "logstash"}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "logstash"}},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "logstash",
+							Image: "docker.elastic.co/logstash/logstash:8.11.0",
+							Env: []corev1.EnvVar{
+								{Name: "LS_JAVA_OPTS", Value: "-Xms256m -Xmx256m"},
+							},
+							Ports: []corev1.ContainerPort{{ContainerPort: 5044, Name: "beats"}},
+							VolumeMounts: []corev1.VolumeMount{
+								{Name: "pipeline", MountPath: "/usr/share/logstash/pipeline"},
+							},
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "pipeline",
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{Name: "logstash-pipeline"},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	_, err := p.client.AppsV1().Deployments(namespace).Create(ctx, dep, metav1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "logstash", Namespace: namespace},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"app": "logstash"},
+			Ports: []corev1.ServicePort{
+				{Name: "beats", Port: 5044, TargetPort: intstr.FromInt(5044), Protocol: corev1.ProtocolTCP},
+			},
+		},
+	}
+	_, err = p.client.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+	return nil
+}
+
+func (p *Provisioner) createKibana(ctx context.Context, namespace string) error {
+	replicas := int32(1)
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "kibana", Namespace: namespace},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "kibana"}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "kibana"}},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "kibana",
+							Image: "docker.elastic.co/kibana/kibana:8.11.0",
+							Env: []corev1.EnvVar{
+								{Name: "ELASTICSEARCH_HOSTS", Value: "http://elasticsearch.elk.svc.cluster.local:9200"},
+								{Name: "SERVER_HOST", Value: "0.0.0.0"},
+							},
+							Ports: []corev1.ContainerPort{{ContainerPort: 5601, Name: "http"}},
+						},
+					},
+				},
+			},
+		},
+	}
+	_, err := p.client.AppsV1().Deployments(namespace).Create(ctx, dep, metav1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "kibana", Namespace: namespace},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"app": "kibana"},
+			Ports: []corev1.ServicePort{
+				{Name: "http", Port: 5601, TargetPort: intstr.FromInt(5601), Protocol: corev1.ProtocolTCP},
+			},
+		},
+	}
+	_, err = p.client.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+	return nil
+}
+
+func (p *Provisioner) createFilebeat(ctx context.Context, namespace string) error {
+	ds := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "filebeat", Namespace: namespace},
+		Spec: appsv1.DaemonSetSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "filebeat"}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "filebeat"}},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "filebeat",
+							Image: "docker.elastic.co/beats/filebeat:8.11.0",
+							Args:  []string{"-e", "-c", "/usr/share/filebeat/filebeat.yml"},
+							Env: []corev1.EnvVar{
+								{
+									Name: "NODE_NAME",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: "spec.nodeName",
+										},
+									},
+								},
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{Name: "config", MountPath: "/usr/share/filebeat/filebeat.yml", SubPath: "filebeat.yml"},
+								{Name: "varlogcontainers", MountPath: "/var/log/containers", ReadOnly: true},
+								{Name: "varlogpods", MountPath: "/var/log/pods", ReadOnly: true},
+								{Name: "varlibdockercontainers", MountPath: "/var/lib/docker/containers", ReadOnly: true},
+							},
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "config",
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{Name: "filebeat-config"},
+								},
+							},
+						},
+						{
+							Name: "varlogcontainers",
+							VolumeSource: corev1.VolumeSource{
+								HostPath: &corev1.HostPathVolumeSource{Path: "/var/log/containers"},
+							},
+						},
+						{
+							Name: "varlogpods",
+							VolumeSource: corev1.VolumeSource{
+								HostPath: &corev1.HostPathVolumeSource{Path: "/var/log/pods"},
+							},
+						},
+						{
+							Name: "varlibdockercontainers",
+							VolumeSource: corev1.VolumeSource{
+								HostPath: &corev1.HostPathVolumeSource{Path: "/var/lib/docker/containers"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	_, err := p.client.AppsV1().DaemonSets(namespace).Create(ctx, ds, metav1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
 	return nil
 }
